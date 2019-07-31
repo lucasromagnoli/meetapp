@@ -28,22 +28,26 @@ class UserController {
 
   async update(req, res) {
     const schema = Yup.object().shape({
+      name: Yup.string(),
       email: Yup.string()
         .email()
         .required(),
+      oldPassword: Yup.string().min(6),
       password: Yup.string()
         .min(6)
-        .required(),
-      confirmPassword: Yup.string()
-        .required()
-        .oneOf([Yup.ref('password')]),
+        .when('oldPassword', (oldPassword, field) =>
+          oldPassword ? field.required() : field
+        ),
+      confirmPassword: Yup.string().when('password', (password, field) =>
+        password ? field.required().oneOf([Yup.ref('password')]) : field
+      ),
     });
 
     if (!(await schema.isValid(req.body))) {
       return res.status(400).json({ error: 'Validation fail' });
     }
 
-    const { email, password, oldPassword } = req.body;
+    const { email, oldPassword, password } = req.body;
 
     const user = await User.findByPk(req.userId);
 
@@ -51,14 +55,29 @@ class UserController {
       return res.status(400).json({ error: 'User not found.' });
     }
 
-    if (!(await user.checkPassword(oldPassword))) {
-      return res.status(400).json({ error: 'Password does not match' });
+    // Verifica se a requisição está constando a senha atual e nova.
+    if ((oldPassword && !password) || (!oldPassword && password)) {
+      return res
+        .status(400)
+        .json({ error: 'Must enter current and new password.' });
     }
 
-    const { name } = await user.update({ password });
+    if (email && email !== user.email) {
+      const emailAlreadyUsed = await User.findOne({ where: { email } });
+
+      if (emailAlreadyUsed) {
+        return res.status(400).json({ error: 'Email already used.' });
+      }
+    }
+
+    if (oldPassword && !(await user.checkPassword(oldPassword))) {
+      return res.status(400).json({ error: 'Password does not match.' });
+    }
+
+    const { id, name, email } = await user.update(req.body);
 
     return res.json({
-      id: req.userId,
+      id,
       name,
       email,
     });
